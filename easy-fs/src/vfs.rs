@@ -15,7 +15,7 @@ use spin::{Mutex, MutexGuard};
 
 /// Virtual filesystem layer over easy-fs
 pub struct Inode {
-    block_id: usize,
+    pub block_id: usize,
     block_offset: usize,
     fs: Arc<Mutex<EasyFileSystem>>,
     block_device: Arc<dyn BlockDevice>,
@@ -37,7 +37,7 @@ impl Inode {
         }
     }
     /// Call a function over a disk inode to read it
-    fn read_disk_inode<V>(&self, f: impl FnOnce(&DiskInode) -> V) -> V {
+    pub fn read_disk_inode<V>(&self, f: impl FnOnce(&DiskInode) -> V) -> V {
         get_block_cache(
             self.block_id,
             Arc::clone(&self.block_device)
@@ -107,6 +107,88 @@ impl Inode {
             v.push(fs.alloc_data());
         }
         disk_inode.increase_size(new_size, v, &self.block_device);
+    }
+    /// link and ulink, Only called by root_inode
+    pub fn get_inode_id(&self) -> usize {
+        let efs = self.fs.lock();
+        efs.get_inode_id(self.block_id, self.block_offset)
+    }
+    pub fn get_nlink(&self, inode: &Arc<Inode>) -> u32 {
+        let inode_id = inode.get_inode_id() as u32;
+        let mut nlink:u32 = 0;
+        self.read_disk_inode(|root_inode| {
+            let file_count = (root_inode.size as usize) / DIRENT_SZ;
+            let mut dir_entry = DirEntry::empty();
+            for i in 0..file_count {
+                assert_eq!(
+                    root_inode.read_at(i * DIRENT_SZ, dir_entry.as_bytes_mut(), &self.block_device),
+                    DIRENT_SZ
+                );
+                if dir_entry.inode_number() == inode_id {
+                    nlink += 1;
+                }
+            }
+        });
+        nlink 
+    }
+    pub fn unlink(&self, name: &str) -> isize {
+        if let Some(mut inode) = self.find(name) {
+            let mut fs = self.fs.lock();
+            if let Some(inode_id) = self.read_disk_inode(|disk_inode| {self.find_inode_id(name, disk_inode)}){
+                self.modify_disk_inode(|root_inode| {
+                    let file_count = (root_inode.size as usize) / DIRENT_SZ;
+                    let mut dirent = DirEntry::empty();
+                    for i in 0..file_count{
+                        assert_eq!(
+                            root_inode.read_at(i * DIRENT_SZ, dirent.as_bytes_mut(), &self.block_device),
+                            DIRENT_SZ
+                        );
+                        if dirent.name() == name{
+                            root_inode.write_at(
+                                i * DIRENT_SZ,
+                                DirEntry::empty().as_bytes(),
+                                &self.block_device,
+                            );
+                        }
+                    }
+                });
+                0
+            }
+            else {
+                -1
+            }
+        }
+        else {
+            -1
+        }
+    }
+    pub fn link(&self, old_name: &str, new_name: &str) -> isize {
+        if let Some(mut inode) = self.find(old_name) {
+            let mut fs = self.fs.lock();
+            if let Some(inode_id) = self.read_disk_inode(|disk_inode| {self.find_inode_id(old_name, disk_inode)}){
+                self.modify_disk_inode(|root_inode| {
+                    // append file in the dirent
+                    let file_count = (root_inode.size as usize) / DIRENT_SZ;
+                    let new_size = (file_count + 1) * DIRENT_SZ;
+                    // increase size
+                    self.increase_size(new_size as u32, root_inode, &mut fs);
+                    // write dirent
+                    let dirent = DirEntry::new(new_name, inode_id);
+                    root_inode.write_at(
+                        file_count * DIRENT_SZ,
+                        dirent.as_bytes(),
+                        &self.block_device,
+                    );
+                });
+                0
+            }
+            else {
+                -1
+            }
+        }
+        else {
+            -1
+        }
     }
     /// Create inode under current inode by name
     pub fn create(&self, name: &str) -> Option<Arc<Inode>> {

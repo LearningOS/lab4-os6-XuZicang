@@ -31,7 +31,7 @@ ELFS := $(patsubst $(APP_DIR)/%.rs, $(TARGET_DIR)/%, $(APPS))
 binary:
 	@echo $(ELFS)
 	@if [ ${CHAPTER} -gt 3 ]; then \
-		cargo build --release ;\
+		cargo build --release --offline;\
 	else \
 		CHAPTER=$(CHAPTER) python3 build.py ;\
 	fi
