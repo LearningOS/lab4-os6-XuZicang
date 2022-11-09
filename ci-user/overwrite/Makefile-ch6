@@ -10,12 +10,12 @@ SBI ?= rustsbi
 BOOTLOADER := ../bootloader/$(SBI)-$(BOARD).bin
 
 fsimg:
-	cd ../easy-fs-fuse && cargo run --release --offline -- \
+	cd ../easy-fs-fuse && cargo run --release -- \
 		-s ../ci-user/user/build/elf \
 		-o $(FS_IMG)
 
 kernel: fsimg
-	cargo build --release --offline
+	cargo build --release
 clean:
 	cargo clean
 
